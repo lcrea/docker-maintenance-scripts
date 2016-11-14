@@ -41,30 +41,42 @@ source $(pwd)/.env
 ################################################################################
 #                                Core functions                                #
 ################################################################################
+select_image() {
+    IMAGE="postgres"
+    IMAGE_ID=$(docker images ${IMAGE} -q | head -n 1)
+
+    if [ "$IMAGE_ID" ] ; then
+        echo ${IMAGE_ID}
+    else
+        echo ${IMAGE}
+    fi
+}
+
 backup() {
     echo "(1/4) Creating a temporary container"
-    DOCKER_ID=$(docker run -d \
+    IMAGE_ID=$(select_image)
+    CONTAINER_ID=$(docker run -d \
                 -v $(pwd):/backup \
                 -v ${PSQL_DOCKER_VOLUME}:${PSQL_DIR} \
                 -e POSTGRES_USER=${PSQL_USER} \
                 -e POSTGRES_PASSWORD=${PSQL_PASS} \
-                postgres)
+                ${IMAGE_ID})
 
     echo "(2/4) Waiting everything is up"
     sleep 30
 
     echo "(3/4) Dumping the database"
-    docker exec ${DOCKER_ID} pg_dump -b -C -c -U ${PSQL_USER} -d ${PSQL_DB} -f /backup/${PSQL_DOCKER_VOLUME}_$(date +'%Y%m%d-%H%M').sql
+    docker exec ${CONTAINER_ID} pg_dump -b -C -c -U ${PSQL_USER} -d ${PSQL_DB} -f /backup/${PSQL_DOCKER_VOLUME}_$(date +'%Y%m%d-%H%M').sql
 
     echo "(4/4) Cleaning everything up"
-    docker stop ${DOCKER_ID}
-    docker rm -v ${DOCKER_ID}
+    docker stop ${CONTAINER_ID}
+    docker rm -v ${CONTAINER_ID}
 }
 
 restore() {
     if [ -r "$1" ]; then
         echo    "(1/5) Deleting volume: ${PSQL_DOCKER_VOLUME}"
-        echo    "NOTICE: This step will delete the previous docker volume, if presents"
+        echo    "NOTICE: This step will delete the previous docker volume, if presents."
         read -p "Would you like to proceed? (default: N) [Y/N]: " NEW_VOLUME
 
         if [[ "${NEW_VOLUME}" = "Y" || "${NEW_VOLUME}" = "y" ]]; then
@@ -77,22 +89,23 @@ restore() {
         fi
 
         echo "(2/5) Creating a temporary container"
-        DOCKER_ID=$(docker run -d \
+        IMAGE_ID=$(select_image)
+        CONTAINER_ID=$(docker run -d \
                     -v $(pwd):/backup \
                     -v ${PSQL_DOCKER_VOLUME}:${PSQL_DIR} \
                     -e POSTGRES_USER=${PSQL_USER} \
                     -e POSTGRES_PASSWORD=${PSQL_PASS} \
-                    postgres)
+                    ${IMAGE_ID})
 
         echo "(3/5) Waiting everything is up"
         sleep 30
 
         echo "(4/5) Restoring data"
-        docker exec ${DOCKER_ID} psql -U ${PSQL_USER} -f /backup/$1
+        docker exec ${CONTAINER_ID} psql -q -U ${PSQL_USER} -f /backup/$1
 
         echo "(5/5) Cleaning everything up"
-        docker stop ${DOCKER_ID}
-        docker rm -v ${DOCKER_ID}
+        docker stop ${CONTAINER_ID}
+        docker rm -v ${CONTAINER_ID}
     else
         echo -e "ERROR!\a"
         echo    "You must indicate a dump file (${PSQL_DOCKER_VOLUME}_xxxxxxxx-xxxx.sql)"

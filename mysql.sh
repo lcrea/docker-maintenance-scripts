@@ -40,29 +40,41 @@ source $(pwd)/.env
 ################################################################################
 #                                Core functions                                #
 ################################################################################
+select_image() {
+    IMAGE="mysql"
+    IMAGE_ID=$(docker images ${IMAGE} -q | head -n 1)
+
+    if [ "$IMAGE_ID" ] ; then
+        echo ${IMAGE_ID}
+    else
+        echo ${IMAGE}
+    fi
+}
+
 backup() {
     echo "(1/4) Creating a temporary container"
-    DOCKER_ID=$(docker run -d \
+    IMAGE_ID=$(select_image)
+    CONTAINER_ID=$(docker run -d \
                 -v $(pwd):/backup \
                 -v ${MYSQL_DOCKER_VOLUME}:${MYSQL_DIR} \
                 -e MYSQL_ROOT_PASSWORD=${MYSQL_PASS} \
-                mysql)
+                ${IMAGE_ID})
 
     echo "(2/4) Waiting everything is up"
     sleep 30
 
     echo "(3/4) Dumping the database"
-    docker exec ${DOCKER_ID} mysqldump --add-drop-database --add-drop-table -B -p${MYSQL_PASS} -r /backup/${MYSQL_DOCKER_VOLUME}_$(date +'%Y%m%d-%H%M').sql ${MYSQL_DB}
+    docker exec ${CONTAINER_ID} mysqldump --add-drop-database --add-drop-table -B -p${MYSQL_PASS} -r /backup/${MYSQL_DOCKER_VOLUME}_$(date +'%Y%m%d-%H%M').sql ${MYSQL_DB}
 
     echo "(4/4) Cleaning everything up"
-    docker stop ${DOCKER_ID}
-    docker rm -v ${DOCKER_ID}
+    docker stop ${CONTAINER_ID}
+    docker rm -v ${CONTAINER_ID}
 }
 
 restore() {
     if [ -r "$1" ]; then
         echo    "(1/5) Deleting volume: ${MYSQL_DOCKER_VOLUME}"
-        echo    "NOTICE: This step will delete the previous docker volume, if presents"
+        echo    "NOTICE: This step will delete the previous docker volume, if presents."
         read -p "Would you like to proceed? (default: N) [Y/N]: " NEW_VOLUME
 
         if [[ "${NEW_VOLUME}" = "Y" || "${NEW_VOLUME}" = "y" ]]; then
@@ -75,20 +87,21 @@ restore() {
         fi
 
         echo "(2/5) Creating a temporary container"
-        DOCKER_ID=$(docker run -d \
+        IMAGE_ID=$(select_image)
+        CONTAINER_ID=$(docker run -d \
                     -v ${MYSQL_DOCKER_VOLUME}:${MYSQL_DIR} \
                     -e MYSQL_ROOT_PASSWORD=${MYSQL_PASS} \
-                    mysql)
+                    ${IMAGE_ID})
 
         echo "(3/5) Waiting everything is up"
         sleep 30
 
         echo "(4/5) Restoring data"
-        docker exec -i ${DOCKER_ID} mysql -p${MYSQL_PASS} < $1
+        docker exec -i ${CONTAINER_ID} mysql -p${MYSQL_PASS} < $1
 
         echo "(5/5) Cleaning everything up"
-        docker stop ${DOCKER_ID}
-        docker rm -v ${DOCKER_ID}
+        docker stop ${CONTAINER_ID}
+        docker rm -v ${CONTAINER_ID}
     else
         echo -e "ERROR!\a"
         echo    "You must indicate a dump file (${MYSQL_DOCKER_VOLUME}_xxxxxxxx-xxxx.sql)"
